@@ -1,0 +1,58 @@
+name: Kustomize Build Check
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+  contents: read
+  checks: read
+  actions: write
+  issues: write
+
+jobs:
+  kustomize-build-check:
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_GITHUB }}
+
+      - name: Get changed YAML files
+        id: changed-files
+        uses: tj-actions/changed-files@v41
+        with:
+          files: |
+            **/*.yaml
+            **/*.yml
+
+      - name: Install Kustomize
+        run: |
+          KUSTOMIZE_VERSION="5.2.1"
+          ARCH=$(uname -m)
+          if [[ "$ARCH" == "aarch64" ]]; then
+            KUSTOMIZE_ARCH="linux_arm64"
+          else
+            KUSTOMIZE_ARCH="linux_amd64"
+          fi
+          curl -LO "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_${KUSTOMIZE_ARCH}.tar.gz"
+          tar -xzf kustomize_v${KUSTOMIZE_VERSION}_${KUSTOMIZE_ARCH}.tar.gz
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Run Kustomize Build
+        if: ${{ steps.changed-files.outputs.all_changed_files != '' }}
+        run: |
+          echo "🔍 Running Kustomize validation..."
+          for file in $(echo "${{ steps.changed-files.outputs.all_changed_files }}" | tr '\n' ' '); do
+            dir=$(dirname "$file")
+            if [[ -f "$dir/kustomization.yaml" ]]; then
+              echo "🔄 Running kustomize build in $dir..."
+              kustomize build "$dir" || {
+                echo "❌ Kustomize Build failed in $dir! Check kustomization.yaml.";
+                exit 1;
+              }
+            fi
+          done
